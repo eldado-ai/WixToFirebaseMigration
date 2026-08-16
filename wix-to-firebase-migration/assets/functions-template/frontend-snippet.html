@@ -1,0 +1,113 @@
+<!--
+  Frontend contact form + reCAPTCHA v3 wiring, matching index.js in this
+  same folder. Copy the relevant pieces into the site's actual page --
+  this isn't meant to be included as-is, it's a working reference for the
+  three things that have to line up: the form fields index.js expects,
+  the honeypot hidden correctly (see references/troubleshooting.md for why
+  "left:-9999px" breaks mobile layouts), and the reCAPTCHA token flow.
+
+  TODO before using: replace SITE_KEY with the real reCAPTCHA site key,
+  and adjust field labels/language for the site.
+-->
+<script src="https://www.google.com/recaptcha/api.js?render=SITE_KEY" async defer></script>
+
+<style>
+  /* Honeypot: hidden from real users and screen readers, but still part of
+     the DOM for a bot to fill in. Do NOT use `left:-9999px` here -- an
+     off-screen absolute position still expands the page's scrollable
+     width to ~10,000px, which breaks mobile layout site-wide. */
+  .hp-field {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0,0,0,0);
+    white-space: nowrap;
+    border: 0;
+  }
+</style>
+
+<form id="contactForm">
+  <div class="field">
+    <label for="cf-name">Name</label>
+    <input id="cf-name" name="name" type="text" required minlength="2" autocomplete="name" />
+  </div>
+  <div class="field">
+    <label for="cf-contact">Phone or email</label>
+    <input id="cf-contact" name="contact" type="text" required minlength="5" />
+  </div>
+  <div class="field">
+    <label for="cf-message">Message</label>
+    <textarea id="cf-message" name="message" rows="4"></textarea>
+  </div>
+
+  <!-- Honeypot: real users never see or fill this. If it arrives non-empty,
+       the backend silently accepts (200) without sending mail. -->
+  <div class="hp-field" aria-hidden="true">
+    <label for="cf-website">Leave this field blank</label>
+    <input id="cf-website" name="website" type="text" tabindex="-1" autocomplete="off" />
+  </div>
+
+  <button type="submit" id="cfSubmit">Send</button>
+  <p id="cfStatus" role="status"></p>
+</form>
+
+<script>
+(function () {
+  var form = document.getElementById('contactForm');
+  var submitBtn = document.getElementById('cfSubmit');
+  var statusEl = document.getElementById('cfStatus');
+
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    statusEl.textContent = '';
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Sending...';
+
+    var payload = {
+      name: document.getElementById('cf-name').value,
+      contact: document.getElementById('cf-contact').value,
+      message: document.getElementById('cf-message').value,
+      website: document.getElementById('cf-website').value,
+    };
+
+    function finish(ok, text) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Send';
+      statusEl.textContent = text;
+      statusEl.className = ok ? 'ok' : 'err';
+    }
+
+    function send(token) {
+      payload.recaptchaToken = token;
+      fetch('/api/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+        .then(function (r) { return r.json().then(function (data) { return { status: r.status, data: data }; }); })
+        .then(function (res) {
+          if (res.status === 200 && res.data.ok) {
+            finish(true, 'Message sent successfully.');
+            form.reset();
+          } else {
+            finish(false, res.data.error || 'Something went wrong. Please try again.');
+          }
+        })
+        .catch(function () { finish(false, 'Something went wrong. Please try again.'); });
+    }
+
+    // Falls back to sending without a token if grecaptcha hasn't loaded
+    // (e.g. blocked by an ad blocker) -- the backend still rejects a
+    // missing token, so this fails safe rather than silently bypassing
+    // verification.
+    if (window.grecaptcha && window.grecaptcha.execute) {
+      grecaptcha.ready(function () {
+        grecaptcha.execute('SITE_KEY', { action: 'contact' }).then(send);
+      });
+    } else {
+      send('');
+    }
+  });
+})();
+</script>
